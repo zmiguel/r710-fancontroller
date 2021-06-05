@@ -5,30 +5,17 @@ so do not expect the most clean code. It's a simple "it works"
 version.
 
 Created by @marcusvb (GitLab & GitHub)
+Edited by @ZMiguel (Everywhere)
 
 """
 from subprocess import Popen, PIPE, STDOUT
 import time
-import string
+import binascii
 
-maxHddTemp = 53
-maxCpuTemp = 80
+max_cpu_temp = 80 # 100% fan
+min_cpu_temp = 40 # 10% fan
 
-highHddTemp = 49
-highCpuTemp = 70
-
-medHddTemp = 47
-medCpuTemp = 60
-
-semiHddTemp = 46
-semiCpuTemp = 55
-
-lowHddTemp = 45
-lowCpuTemp = 50
-
-sleepTime = 5
-celcius = 'C'
-floatDot = '.'
+sleep_time = 5
 user = "root"
 password = "calvin"
 ip = "192.168.x.xx"
@@ -42,83 +29,52 @@ def sendcommand(cmdIn):
 def ipmicmd(cmdIn):
     return sendcommand("ipmitool -I lanplus -H " + ip +" -U " + user + " -P " + password + " " + cmdIn)
 
-#Gets hdd temp from megacli and return the average of it
-def gethddtemp():
-    cmd = sendcommand('megacli -PDList -aALL | grep "Drive Temperature"')
-    indexes = [pos for pos, char in enumerate(cmd) if char == celcius]
-    hddtemperatures = []
-    for loc in indexes:
-        temp = cmd[int(loc) - 2] + cmd[int(loc) - 1]
-        hddtemperatures.append(int(temp))
-
-    #return the average hdd temperature
-    return sum(hddtemperatures) / int(len(hddtemperatures))
-
 #Gets the CPU temperture from lm-sensors, returns the average of it.
 def getcputemp():
-    cmd = sendcommand('sensors  -u | grep "input"')
-    indexes = [pos for pos, char in enumerate(cmd) if char == floatDot]
-    cputemperatures = []
-    for loc in indexes:
-        temp = cmd[int(loc) - 2] + cmd[int(loc) - 1]
+    cmd = sendcommand('sensors -u | grep "input" | cut -d ":" -f2 | cut -d "." -f1').decode("utf-8").replace(" ","")
+    templist = cmd.split("\n")
+    templist.pop()
+    cputemperatures = list()
+    for i in templist:
+        temp = int(i)
         cputemperatures.append(int(temp))
 
     #return the average cpu temperature
     return sum(cputemperatures) / int(len(cputemperatures))
 
-#Check if controller was in automode, if so we override to manual.
-def checkstatus(status):
-    if (status == 4):
-        ipmicmd("raw 0x30 0x30 0x01 0x00")
-
 #Main checking function which checks temperatures to the default set above.
-def checktemps(status):
-    avgHddT = gethddtemp()
-    avgCpuT = getcputemp()
+def checktemps(last_temp: int):
+    avg_cpu_temp = int(round(getcputemp()))
+    print("Average CPU temp is: {}C".format(avg_cpu_temp))
 
-    if (avgHddT > maxHddTemp or avgCpuT > maxCpuTemp):
-        if (status != 4):
-            ipmicmd("raw 0x30 0x30 0x01 0x01")
-            print("Setting to auto/loud mode, Server it too hot")
-        status = 4
+    if last_temp != avg_cpu_temp:
+        if (avg_cpu_temp < 40):
+            ipmicmd("raw 0x30 0x30 0x02 0xff 0x0f")
+            print("Setting to 10%, Server is cool")
+        elif (avg_cpu_temp >= 40 and avg_cpu_temp <=85):
+            fan_speed = int(round(10 + (avg_cpu_temp - min_cpu_temp) * 2))
+            fan_speed_bytes = '{:x}'.format(int(fan_speed))
 
-    elif(avgHddT > highHddTemp or avgCpuT > highCpuTemp):
-        if (status != 3):
-            checkstatus(status)
-            ipmicmd("raw 0x30 0x30 0x02 0xff 0x20")
-            print("Setting to 5000RPM, Server is hot")
-        status = 3
+            ipmi_cmd = "raw 0x30 0x30 0x02 0xff 0x{}".format(fan_speed_bytes)
+            ipmicmd(ipmi_cmd)
 
-    elif(avgHddT > medHddTemp or avgCpuT > medCpuTemp):
-        if (status != 2):
-            checkstatus(status)
-            ipmicmd("raw 0x30 0x30 0x02 0xff 0x16")
-            print("Setting to 3600RPM, Server is toasty")
-        status = 2
-
-    elif(avgHddT > semiHddTemp or avgCpuT > semiCpuTemp):
-        if (status != 1):
-            checkstatus(status)
-            ipmicmd("raw 0x30 0x30 0x02 0xff 0x12")
-            print("Setting to 3200RPM, Server is semi")
-        status = 1
-
+            print("Settings fan to {}% or 0x{}".format(fan_speed, fan_speed_bytes))
+        else:
+            ipmicmd("raw 0x30 0x30 0x02 0xff 0x64")
+            print("Settings fan to 100%, Server is very hot")
     else:
-        checkstatus(status)
-        if (status != 0):
-            ipmicmd("raw 0x30 0x30 0x02 0xff 0x06")
-            print("Setting to 1800 RPM, Server is cool")
-        status = 0
+        print("No Temperaure change...")
 
-    print("Cpu at: " + str(avgCpuT) + " celcius \n" + "Hdd at: " + str(avgHddT) +" celcius \n")
-    return status
+    return avg_cpu_temp
 
 #Main running function.
 def main():
-    status = 999
+    # set fans to manual control
+    ipmicmd("raw 0x30 0x30 0x01 0x00")
+    last_cpu_temp = 80
     while True:
-        time.sleep(sleepTime)
-        status = checktemps(status)
-        print("Sleeping for " + str(sleepTime))
+        time.sleep(sleep_time)
+        last_cpu_temp = checktemps(last_cpu_temp)
+        print("Sleeping for " + str(sleep_time))
 if __name__ == '__main__':
     main()
