@@ -10,7 +10,6 @@ Edited by @ZMiguel (Everywhere)
 """
 from subprocess import Popen, PIPE, STDOUT
 import time
-import binascii
 
 max_cpu_temp = 80 # 100% fan
 min_cpu_temp = 40 # 10% fan
